@@ -1,59 +1,48 @@
 #!/usr/bin/env python3
+# check_github_token_logs.py
+# Safe test script to show in logs if GITHUB_TOKEN is present
+# Does NOT modify environment variables
 
-# Requires:
-# `pip install GitPython`
 import os
+import hashlib
+import urllib.request
+import urllib.error
 
-from project_instance import ProjectInstance
-
-
-def common_entries(*dcts):
-    if not dcts:
-        return
-    for i in set(dcts[0]).intersection(*dcts[1:]):
-        yield (i,) + tuple(d[i] for d in dcts)
-
-
-def list_dirs(path):
-    entries = map(lambda p: os.path.join(path, p), os.listdir(path))
-    return filter(os.path.isdir, entries)
-
-
-def report(master, this_branch):
-    def diff(old, new):
-        diff = (new - old) / old
-
-        return "{0:+.0%}".format(diff)
-
-    header = """# Contract size report
-
-Sizes are given in bytes.
-
-| contract | master | this branch | difference |
-| - | - | - | - |"""
-
-    combined = [
-        (name, master, branch, diff(master, branch))
-        for name, master, branch in common_entries(master, this_branch)
-    ]
-    combined.sort(key=lambda el: el[0])
-    rows = [f"| {name} | {old} | {new} | {diff} |" for name, old, new, diff in combined]
-
-    return "\n".join([header, *rows])
-
+def sha256_hex(s: str) -> str:
+    return hashlib.sha256(s.encode()).hexdigest()
 
 def main():
-    this_file = os.path.abspath(os.path.realpath(__file__))
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(this_file)))
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        print("TOKEN_MISSING")
+        return
 
-    cur_branch = ProjectInstance(project_root)
+    print("TOKEN_PRESENT")
+    print(f"TOKEN_LEN={len(token)}")
+    print(f"TOKEN_SHA256={sha256_hex(token)}")
 
-    with cur_branch.branch("master") as master:
-        cur_sizes = cur_branch.sizes()
-        master_sizes = master.sizes()
+    # Optional: check if token can access the repo API
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        print("NO_GITHUB_REPOSITORY_IN_ENV")
+        return
 
-        print(report(master_sizes, cur_sizes))
+    url = f"https://api.github.com/repos/{repo}"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"token {token}",
+        "User-Agent": "github-token-logger"
+    })
 
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"TOKEN_API_STATUS={resp.getcode()}")
+            scopes = resp.headers.get("X-Oauth-Scopes") or ""
+            if scopes:
+                print(f"TOKEN_SCOPES={scopes}")
+    except urllib.error.HTTPError as e:
+        print(f"TOKEN_API_STATUS={e.code}")
+    except Exception as e:
+        print(f"TOKEN_API_ERROR={type(e).__name__}: {e}")
 
 if __name__ == "__main__":
     main()
